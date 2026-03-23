@@ -1,0 +1,66 @@
+.tasks-field-files.b24-files-list-ext--active .tasks-field-files-shadow,
+.tasks-field-files.b24-files-list-ext--active .tasks-field-files-more-button {
+  display: none !important;
+}
+
+.tasks-field-files.b24-files-list-ext--active .tasks-field-files-list {
+  max-height: none;
+  padding-right: 0;
+}
+
+.tasks-field-files .b24-files-list-ext__native {
+  display: none !important;
+}
+
+.b24-files-list-ext__replacement {
+  padding-top: 4px;
+}
+
+.b24-files-list-ext__list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.b24-files-list-ext__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(47, 198, 246, 0.2);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.b24-files-list-ext__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(47, 198, 246, 0.12);
+  color: #09719f;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.b24-files-list-ext__link {
+  min-width: 0;
+  color: #0f172a;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.b24-files-list-ext__link:hover,
+.b24-files-list-ext__link:focus-visible {
+  color: #09719f;
+  text-decoration: underline;
+}
