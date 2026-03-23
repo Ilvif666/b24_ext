@@ -8,6 +8,9 @@ let mutationObserver = null;
 let urlWatcherTimer = null;
 let lastHandledUrl = "";
 let routeHooksInstalled = false;
+const pendingDeletes = new Map();
+const PENDING_DELETE_TTL = 10000;
+const HIDDEN_SHEET_STYLE_ID = "b24-files-list-hidden-sheet-style";
 
 bootstrap();
 
@@ -46,11 +49,19 @@ function observePage() {
 
   mutationObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
-      if (mutation.type !== "childList") {
-        continue;
+      if (
+        mutation.type === "childList" &&
+        [...mutation.addedNodes].some(shouldTriggerRender)
+      ) {
+        scheduleRender();
+        return;
       }
 
-      if ([...mutation.addedNodes].some(shouldTriggerRender)) {
+      if (
+        mutation.type === "attributes" &&
+        mutation.target instanceof Element &&
+        shouldTriggerRender(mutation.target)
+      ) {
         scheduleRender();
         return;
       }
@@ -58,6 +69,15 @@ function observePage() {
   });
 
   mutationObserver.observe(document.body, {
+    attributes: true,
+    attributeFilter: [
+      "class",
+      "style",
+      "title",
+      "data-src",
+      "data-title",
+      "data-task-files-count"
+    ],
     childList: true,
     subtree: true
   });
@@ -127,6 +147,7 @@ function renderAllBlocks() {
     return;
   }
 
+  cleanupPendingDeletes();
   document.querySelectorAll(BLOCK_SELECTOR).forEach(renderBlock);
 }
 
@@ -137,20 +158,10 @@ function renderBlock(block) {
   }
 
   const files = collectFiles(block);
-  if (!files.length) {
-    return;
-  }
-
   const replacement = ensureReplacement(listHost);
-  const list = document.createElement("ol");
-  list.className = `${EXTENSION_CLASS}__list`;
-
-  for (const file of files) {
-    list.append(buildListItem(file));
-  }
-
-  replacement.replaceChildren(list);
+  replacement.replaceChildren(buildList(files, block));
   block.classList.add(`${EXTENSION_CLASS}--active`);
+  syncHeaderAction(block);
 
   const countNode = block.querySelector(".tasks-field-files-text");
   if (countNode) {
@@ -184,11 +195,11 @@ function hideNativeTiles(listHost) {
 
 function collectFiles(block) {
   const files = new Map();
-  const tileNodes = block.querySelectorAll(".ui-tile-uploader-item-preview-content");
+  const tileNodes = block.querySelectorAll(".ui-tile-uploader-item");
 
   tileNodes.forEach((tile) => {
-    const file = extractFileFromTile(tile);
-    if (file) {
+    const file = extractFileFromTileItem(tile);
+    if (file && !isDeletePending(file.key)) {
       files.set(file.key, file);
     }
   });
@@ -207,21 +218,22 @@ function collectFiles(block) {
   );
 }
 
-function extractFileFromTile(tile) {
+function extractFileFromTileItem(tileItem) {
+  const previewContent = tileItem.querySelector(".ui-tile-uploader-item-preview-content");
   const href = sanitizeUrl(
-    tile.dataset.src || tile.querySelector("a[href]")?.getAttribute("href")
+    previewContent?.dataset.src || tileItem.querySelector("a[href]")?.getAttribute("href")
   );
-  if (!href) {
-    return null;
-  }
 
   const title =
-    normalizeText(tile.dataset.title) ||
-    normalizeText(tile.querySelector(".ui-tile-uploader-item-name-box")?.title) ||
-    buildTitleFromChunks(tile) ||
+    normalizeText(previewContent?.dataset.title) ||
+    normalizeText(tileItem.querySelector(".ui-tile-uploader-item-name-box")?.title) ||
+    buildTitleFromChunks(tileItem) ||
     "Без названия";
 
-  return toFileRecord(title, href);
+  const removeButton = tileItem?.querySelector(".ui-tile-uploader-item-remove");
+  const isComplete = tileItem.classList.contains("ui-tile-uploader-item--complete");
+
+  return toFileRecord(title, href, removeButton, isComplete ? "ready" : "uploading");
 }
 
 function extractFileFromAnchor(anchor) {
@@ -238,10 +250,17 @@ function extractFileFromAnchor(anchor) {
     return null;
   }
 
-  return toFileRecord(title, href);
+  return toFileRecord(title, href, null, "ready");
 }
 
 function buildTitleFromChunks(tile) {
+  const directTitle = normalizeText(
+    tile.querySelector(".ui-tile-uploader-item-name")?.textContent
+  );
+  if (directTitle) {
+    return directTitle;
+  }
+
   const name = normalizeText(
     tile.querySelector(".ui-tile-uploader-item-name-title")?.textContent
   );
@@ -252,7 +271,7 @@ function buildTitleFromChunks(tile) {
   return `${name}${extension}`.trim();
 }
 
-function toFileRecord(title, href) {
+function toFileRecord(title, href, removeButton, status) {
   const normalizedTitle = normalizeText(title);
   if (!normalizedTitle) {
     return null;
@@ -262,7 +281,9 @@ function toFileRecord(title, href) {
     key: `${href}::${normalizedTitle}`,
     title: normalizedTitle,
     href,
-    extension: getExtension(normalizedTitle)
+    extension: getExtension(normalizedTitle),
+    removeButton: removeButton instanceof HTMLElement ? removeButton : null,
+    status
   };
 }
 
@@ -289,22 +310,284 @@ function getExtension(title) {
   return match ? match[1].toUpperCase() : "FILE";
 }
 
+function buildList(files, block) {
+  const fragment = document.createDocumentFragment();
+
+  if (!files.length) {
+    const emptyState = document.createElement("div");
+    emptyState.className = `${EXTENSION_CLASS}__empty`;
+    emptyState.textContent = "Файлов пока нет";
+    fragment.append(emptyState);
+    return fragment;
+  }
+
+  const list = document.createElement("ol");
+  list.className = `${EXTENSION_CLASS}__list`;
+
+  for (const file of files) {
+    list.append(buildListItem(file));
+  }
+
+  fragment.append(list, buildFooter(files, block));
+  return fragment;
+}
+
 function buildListItem(file) {
   const item = document.createElement("li");
   item.className = `${EXTENSION_CLASS}__item`;
+  if (isDeletePending(file.key)) {
+    item.classList.add(`${EXTENSION_CLASS}__item--pending`);
+  }
+  if (file.status !== "ready") {
+    item.classList.add(`${EXTENSION_CLASS}__item--uploading`);
+  }
 
   const extension = document.createElement("span");
   extension.className = `${EXTENSION_CLASS}__badge`;
-  extension.textContent = file.extension;
+  extension.textContent = file.status === "ready" ? file.extension : "...";
 
-  const link = document.createElement("a");
-  link.className = `${EXTENSION_CLASS}__link`;
-  link.href = file.href;
-  link.target = "_blank";
-  link.rel = "noreferrer";
-  link.textContent = file.title;
+  const titleNode =
+    file.href && file.status === "ready"
+      ? document.createElement("a")
+      : document.createElement("span");
+  titleNode.className = `${EXTENSION_CLASS}__link`;
+  titleNode.textContent = file.title;
 
-  item.append(extension, link);
+  if (titleNode instanceof HTMLAnchorElement) {
+    titleNode.href = file.href;
+    titleNode.target = "_blank";
+    titleNode.rel = "noreferrer";
+  }
+
+  const actions = document.createElement("div");
+  actions.className = `${EXTENSION_CLASS}__actions`;
+
+  if (file.removeButton && !isDeletePending(file.key)) {
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = `${EXTENSION_CLASS}__delete`;
+    deleteButton.textContent = "×";
+    deleteButton.setAttribute("aria-label", `Удалить файл ${file.title}`);
+    deleteButton.title = "Удалить";
+    if (isDeletePending(file.key)) {
+      deleteButton.disabled = true;
+    }
+    deleteButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (isDeletePending(file.key)) {
+        return;
+      }
+
+      pendingDeletes.set(file.key, Date.now());
+      item.classList.add(`${EXTENSION_CLASS}__item--pending`);
+      deleteButton.disabled = true;
+      triggerNativeRemove(file.removeButton);
+      scheduleRender();
+    });
+    actions.append(deleteButton);
+  }
+
+  item.append(extension, titleNode, actions);
 
   return item;
+}
+
+function buildFooter(files, block) {
+  const footer = document.createElement("div");
+  footer.className = `${EXTENSION_CLASS}__footer`;
+
+  const detailsButton = document.createElement("button");
+  detailsButton.type = "button";
+  detailsButton.className = `${EXTENSION_CLASS}__footer-button`;
+  detailsButton.textContent = "Подробно";
+  detailsButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openNativeCardsView(block);
+  });
+
+  const downloadAllButton = document.createElement("button");
+  downloadAllButton.type = "button";
+  downloadAllButton.className = `${EXTENSION_CLASS}__footer-button`;
+  downloadAllButton.textContent = "Скачать всё";
+  downloadAllButton.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    await triggerNativeArchiveDownload(block, downloadAllButton);
+  });
+
+  footer.append(detailsButton, downloadAllButton);
+  return footer;
+}
+
+function syncHeaderAction(block) {
+  const headerButton = block.querySelector(".tasks-field-files-main");
+  if (!headerButton || headerButton.dataset.b24FilesListBound === "true") {
+    return;
+  }
+
+  headerButton.dataset.b24FilesListBound = "true";
+  headerButton.addEventListener("click", () => {
+    window.setTimeout(() => scheduleRender(), 250);
+  });
+}
+
+function openNativeCardsView(block) {
+  const nativeOpenControl =
+    block.querySelector("[data-task-files-open]") ||
+    block.querySelector(".tasks-field-files-main");
+
+  if (nativeOpenControl instanceof HTMLElement) {
+    nativeOpenControl.click();
+    window.setTimeout(() => scheduleRender(), 300);
+  }
+}
+
+async function downloadAllFiles(files, button) {
+  return undefined;
+}
+
+async function triggerNativeArchiveDownload(block, button) {
+  const previousLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "Скачиваю...";
+
+  try {
+    const archiveButton = await findArchiveDownloadButton(block, true);
+    if (archiveButton instanceof HTMLElement) {
+      archiveButton.click();
+      closeNativeFilesSheet(block.dataset.taskId);
+    }
+  } finally {
+    unhideNativeFilesSheet();
+    button.disabled = false;
+    button.textContent = previousLabel;
+  }
+}
+
+async function findArchiveDownloadButton(block, openSilently = false) {
+  const taskId = block.dataset.taskId;
+  const existingButton = queryArchiveDownloadButton(taskId);
+  if (existingButton) {
+    return existingButton;
+  }
+
+  if (openSilently) {
+    hideNativeFilesSheet();
+  }
+
+  openNativeCardsView(block);
+  return waitForArchiveDownloadButton(taskId, 2500);
+}
+
+function queryArchiveDownloadButton(taskId) {
+  const scope = taskId
+    ? `.tasks-field-files-sheet[data-task-id="${taskId}"]`
+    : ".tasks-field-files-sheet";
+
+  return document.querySelector(
+    `${scope} [data-task-files-download-archive] button, ${scope} [data-task-files-download-archive]`
+  );
+}
+
+function waitForArchiveDownloadButton(taskId, timeoutMs) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+
+    const check = () => {
+      const button = queryArchiveDownloadButton(taskId);
+      if (button) {
+        resolve(button);
+        return;
+      }
+
+      if (Date.now() - startedAt >= timeoutMs) {
+        resolve(null);
+        return;
+      }
+
+      window.setTimeout(check, 100);
+    };
+
+    check();
+  });
+}
+
+function closeNativeFilesSheet(taskId) {
+  const scope = taskId
+    ? `.tasks-field-files-sheet[data-task-id="${taskId}"]`
+    : ".tasks-field-files-sheet";
+  const closeButton = document.querySelector(
+    `${scope} [data-task-files-close], ${scope} .tasks-field-files-close`
+  );
+
+  if (closeButton instanceof HTMLElement) {
+    window.setTimeout(() => closeButton.click(), 50);
+  }
+}
+
+function hideNativeFilesSheet() {
+  if (document.getElementById(HIDDEN_SHEET_STYLE_ID)) {
+    return;
+  }
+
+  const style = document.createElement("style");
+  style.id = HIDDEN_SHEET_STYLE_ID;
+  style.textContent = `
+    [class*="bottom-sheet"],
+    .tasks-field-files-sheet,
+    .tasks-field-files-sheet * {
+      opacity: 0 !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+      transition: none !important;
+      animation: none !important;
+    }
+  `;
+  document.head.append(style);
+}
+
+function unhideNativeFilesSheet() {
+  document.getElementById(HIDDEN_SHEET_STYLE_ID)?.remove();
+}
+
+function triggerNativeRemove(removeButton) {
+  const targets = [removeButton, removeButton.firstElementChild].filter(Boolean);
+
+  for (const target of targets) {
+    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(
+      (eventName) => {
+        target.dispatchEvent(
+          new MouseEvent(eventName, {
+            bubbles: true,
+            cancelable: true,
+            view: window
+          })
+        );
+      }
+    );
+  }
+}
+
+function isDeletePending(fileKey) {
+  const startedAt = pendingDeletes.get(fileKey);
+  if (!startedAt) {
+    return false;
+  }
+
+  if (Date.now() - startedAt > PENDING_DELETE_TTL) {
+    pendingDeletes.delete(fileKey);
+    return false;
+  }
+
+  return true;
+}
+
+function cleanupPendingDeletes() {
+  for (const [fileKey, startedAt] of pendingDeletes.entries()) {
+    if (Date.now() - startedAt > PENDING_DELETE_TTL) {
+      pendingDeletes.delete(fileKey);
+    }
+  }
 }
