@@ -9,8 +9,15 @@ let urlWatcherTimer = null;
 let lastHandledUrl = "";
 let routeHooksInstalled = false;
 const pendingDeletes = new Map();
+const externalLinkCache = new Map();
 const PENDING_DELETE_TTL = 10000;
 const HIDDEN_SHEET_STYLE_ID = "b24-files-list-hidden-sheet-style";
+const BAMBU_FILE_EXTENSIONS = new Set(["STL", "STEP", "STP", "3MF", "OBJ"]);
+const LYCHEE_FILE_EXTENSIONS = new Set(["STL", "OBJ", "3MF", "LYS", "LYT", "GLB"]);
+const MODEL_FILE_EXTENSIONS = new Set([
+  ...BAMBU_FILE_EXTENSIONS,
+  ...LYCHEE_FILE_EXTENSIONS
+]);
 
 bootstrap();
 
@@ -27,6 +34,72 @@ function start() {
   observePage();
   observeRouteChanges();
   handleRouteChange();
+}
+
+async function probeUrlFromBackground(url, credentials = "omit") {
+  return new Promise((resolve, reject) => {
+    try {
+      if (!chrome.runtime?.id) {
+        throw new Error("Extension context invalidated. Please refresh the page.");
+      }
+
+      chrome.runtime.sendMessage({ type: "PROBE_URL", url, credentials }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else if (response?.ok) {
+          resolve(response.data);
+        } else {
+          reject(new Error(response?.error || "Probe failed"));
+        }
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+async function downloadModelFromBackground(url, filename, extension) {
+  return new Promise((resolve, reject) => {
+    try {
+      if (!chrome.runtime?.id) {
+        throw new Error("Extension context invalidated. Please refresh the page.");
+      }
+
+      chrome.runtime.sendMessage({ type: "DOWNLOAD_MODEL", url, filename, extension }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else if (response?.ok) {
+          resolve(response.data);
+        } else {
+          reject(new Error(response?.error || "Download failed"));
+        }
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+async function openNativeSlicerFromBackground(app, filename) {
+  return new Promise((resolve, reject) => {
+    try {
+      if (!chrome.runtime?.id) {
+        throw new Error("Extension context invalidated. Please refresh the page.");
+      }
+
+      chrome.runtime.sendMessage({ type: "OPEN_IN_NATIVE_SLICER", app, filename }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else if (response?.ok) {
+          resolve(response.data);
+        } else {
+          reject(new Error(response?.error || "Native slicer open failed"));
+        }
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
 }
 
 function isBitrixTaskPage() {
@@ -221,7 +294,9 @@ function collectFiles(block) {
 function extractFileFromTileItem(tileItem) {
   const previewContent = tileItem.querySelector(".ui-tile-uploader-item-preview-content");
   const href = sanitizeUrl(
-    previewContent?.dataset.src || tileItem.querySelector("a[href]")?.getAttribute("href")
+    previewContent?.dataset.unifiedLink ||
+      previewContent?.dataset.src ||
+      tileItem.querySelector("a[href]")?.getAttribute("href")
   );
 
   const title =
@@ -233,7 +308,17 @@ function extractFileFromTileItem(tileItem) {
   const removeButton = tileItem?.querySelector(".ui-tile-uploader-item-remove");
   const isComplete = tileItem.classList.contains("ui-tile-uploader-item--complete");
 
-  return toFileRecord(title, href, removeButton, isComplete ? "ready" : "uploading");
+  return toFileRecord(
+    title,
+    href,
+    removeButton,
+    isComplete ? "ready" : "uploading",
+    {
+      objectId: normalizeText(previewContent?.dataset.objectId),
+      attachedObjectId: normalizeText(previewContent?.dataset.attachedObjectId),
+      externalLink: sanitizeUrl(previewContent?.dataset.unifiedLink)
+    }
+  );
 }
 
 function extractFileFromAnchor(anchor) {
@@ -271,7 +356,7 @@ function buildTitleFromChunks(tile) {
   return `${name}${extension}`.trim();
 }
 
-function toFileRecord(title, href, removeButton, status) {
+function toFileRecord(title, href, removeButton, status, details = {}) {
   const normalizedTitle = normalizeText(title);
   if (!normalizedTitle) {
     return null;
@@ -281,6 +366,9 @@ function toFileRecord(title, href, removeButton, status) {
     key: `${href}::${normalizedTitle}`,
     title: normalizedTitle,
     href,
+    objectId: details.objectId || null,
+    attachedObjectId: details.attachedObjectId || null,
+    externalLink: details.externalLink || null,
     extension: getExtension(normalizedTitle),
     removeButton: removeButton instanceof HTMLElement ? removeButton : null,
     status
@@ -359,6 +447,14 @@ function buildListItem(file) {
     titleNode.rel = "noreferrer";
   }
 
+  const main = document.createElement("div");
+  main.className = `${EXTENSION_CLASS}__main`;
+  main.append(titleNode);
+
+  if (shouldRenderSlicerActions(file)) {
+    main.append(buildSlicerActions(file));
+  }
+
   const actions = document.createElement("div");
   actions.className = `${EXTENSION_CLASS}__actions`;
 
@@ -388,9 +484,355 @@ function buildListItem(file) {
     actions.append(deleteButton);
   }
 
-  item.append(extension, titleNode, actions);
+  item.append(extension, main, actions);
 
   return item;
+}
+
+function shouldRenderSlicerActions(file) {
+  return Boolean(
+    file?.href &&
+      file.status === "ready" &&
+      MODEL_FILE_EXTENSIONS.has(file.extension)
+  );
+}
+
+function buildSlicerActions(file) {
+  const container = document.createElement("div");
+  container.className = `${EXTENSION_CLASS}__slicer-actions`;
+
+  container.append(
+    buildSlicerButton({
+      file,
+      app: "lychee",
+      label: "Lychee",
+      title: "Открыть в Lychee",
+      disabled: !LYCHEE_FILE_EXTENSIONS.has(file.extension),
+      disabledTitle: `Lychee не поддерживает ${file.extension}. Подойдут STL, OBJ, 3MF, LYS, LYT или GLB.`
+    }),
+    buildSlicerButton({
+      file,
+      app: "bambu",
+      label: "Bambu Studio",
+      title: "Открыть в Bambu Studio",
+      disabled: !BAMBU_FILE_EXTENSIONS.has(file.extension),
+      disabledTitle: `Bambu Studio не поддерживает ${file.extension} для этой кнопки.`
+    })
+  );
+
+  return container;
+}
+
+function buildSlicerButton({ file, app, label, title, disabled = false, disabledTitle = title }) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `${EXTENSION_CLASS}__slicer-button ${EXTENSION_CLASS}__slicer-button--${app}`;
+  button.title = disabled ? disabledTitle : title;
+  button.disabled = disabled;
+  button.setAttribute("aria-label", `${disabled ? disabledTitle : title}: ${file.title}`);
+
+  const icon = document.createElement("span");
+  icon.className = `${EXTENSION_CLASS}__slicer-icon`;
+  icon.setAttribute("aria-hidden", "true");
+  icon.append(createSlicerIcon(app));
+
+  const text = document.createElement("span");
+  text.className = `${EXTENSION_CLASS}__slicer-label`;
+  text.textContent = label;
+
+  button.append(icon, text);
+  button.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (button.disabled) {
+      return;
+    }
+
+    await openFileInSlicer(app, file, button, text);
+  });
+
+  return button;
+}
+
+function createSlicerIcon(app) {
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.classList.add(`${EXTENSION_CLASS}__slicer-icon-svg`);
+
+  if (app === "lychee") {
+    const body = document.createElementNS(svgNS, "path");
+    body.setAttribute(
+      "d",
+      "M12 4.5c-3.5 0-6.5 2.76-6.5 6.1 0 4.42 3.72 8.9 6.5 8.9s6.5-4.48 6.5-8.9c0-3.34-3-6.1-6.5-6.1Z"
+    );
+    body.setAttribute("fill", "#ea4c89");
+
+    const highlight = document.createElementNS(svgNS, "path");
+    highlight.setAttribute(
+      "d",
+      "M9.2 7.5c-1.44.7-2.45 2.04-2.45 3.53 0 2.53 2.06 5.8 3.61 7.02-.96-.1-2.35-1.34-3.44-2.99-1.01-1.53-1.67-3.17-1.67-4.56 0-1.47 1.66-2.82 3.95-3Z"
+    );
+    highlight.setAttribute("fill", "#ff9ac0");
+
+    const leaf = document.createElementNS(svgNS, "path");
+    leaf.setAttribute(
+      "d",
+      "M12.56 3.9c.52-1.18 1.55-1.93 3.32-2.4-.1 1.96-1.03 3.25-2.88 3.95l-.44-1.55Z"
+    );
+    leaf.setAttribute("fill", "#2aa84a");
+
+    svg.append(body, highlight, leaf);
+    return svg;
+  }
+
+  const outer = document.createElementNS(svgNS, "path");
+  outer.setAttribute(
+    "d",
+    "M12 2.75 19.25 7v10L12 21.25 4.75 17V7L12 2.75Z"
+  );
+  outer.setAttribute("fill", "#00ae42");
+
+  const inner = document.createElementNS(svgNS, "path");
+  inner.setAttribute(
+    "d",
+    "M12 6.5 16 8.75v4.5L12 15.5 8 13.25v-4.5L12 6.5Z"
+  );
+  inner.setAttribute("fill", "#ffffff");
+
+  const core = document.createElementNS(svgNS, "circle");
+  core.setAttribute("cx", "12");
+  core.setAttribute("cy", "11");
+  core.setAttribute("r", "1.6");
+  core.setAttribute("fill", "#00ae42");
+
+  svg.append(outer, inner, core);
+  return svg;
+}
+
+async function openFileInSlicer(app, file, button, labelNode) {
+  const previousLabel = labelNode.textContent;
+  button.disabled = true;
+  button.classList.remove(`${EXTENSION_CLASS}__slicer-button--error`);
+  button.classList.add(`${EXTENSION_CLASS}__slicer-button--loading`);
+  labelNode.textContent = "Готовлю...";
+
+  try {
+    const externalLink = await getExternalLink(file);
+    console.log(`${EXTENSION_CLASS}: Download link resolved for ${file.title}`);
+    labelNode.textContent = "Скачиваю...";
+    const download = await downloadModelFromBackground(externalLink, file.title, file.extension);
+    console.log(`${EXTENSION_CLASS}: Downloaded model:`, {
+      id: download.id,
+      filename: download.filename,
+      mime: download.mime,
+      fileSize: download.fileSize
+    });
+    labelNode.textContent = "Открываю...";
+    await openNativeSlicerFromBackground(app, download.filename);
+  } catch (error) {
+    console.warn(`${EXTENSION_CLASS}: slicer open failed`, error);
+    button.classList.add(`${EXTENSION_CLASS}__slicer-button--error`);
+    labelNode.textContent = "Ошибка";
+    window.setTimeout(() => {
+      button.classList.remove(`${EXTENSION_CLASS}__slicer-button--error`);
+      labelNode.textContent = previousLabel;
+    }, 2500);
+    return;
+  } finally {
+    button.disabled = false;
+    button.classList.remove(`${EXTENSION_CLASS}__slicer-button--loading`);
+  }
+
+  labelNode.textContent = previousLabel;
+}
+
+async function getExternalLink(file) {
+  const cacheKey = file.objectId || file.attachedObjectId || file.href;
+  if (externalLinkCache.has(cacheKey)) {
+    return externalLinkCache.get(cacheKey);
+  }
+
+  const candidates = [];
+  const addCandidate = (url, source) => {
+    const cleanUrl = sanitizeUrl(url);
+    if (!cleanUrl) {
+      return;
+    }
+
+    candidates.push({ url: cleanUrl, source });
+  };
+
+  addCandidate(file.href, "dom.href");
+  addCandidate(file.externalLink, "dom.externalLink");
+
+  const checkedCandidates = new Set();
+  for (const candidate of candidates) {
+    if (!candidate?.url || checkedCandidates.has(candidate.url)) {
+      continue;
+    }
+
+    checkedCandidates.add(candidate.url);
+
+    let probe;
+    try {
+      probe = await probeUrlFromBackground(candidate.url, "include");
+    } catch (error) {
+      console.warn(`${EXTENSION_CLASS}: probe failed`, candidate, error);
+      continue;
+    }
+
+    console.debug(`${EXTENSION_CLASS}: probe`, {
+      source: candidate.source,
+      url: candidate.url,
+      probe
+    });
+
+    if (isProbablyModelResponse(probe, file.extension)) {
+      const launchUrl = probe.finalUrl || candidate.url;
+      externalLinkCache.set(cacheKey, launchUrl);
+      console.log(`${EXTENSION_CLASS}: Найдена рабочая ссылка на модель`, {
+        source: candidate.source,
+        status: probe.status,
+        contentType: probe.contentType,
+        contentDisposition: probe.contentDisposition
+      });
+      return launchUrl;
+    }
+  }
+
+  throw new Error("DOM-ссылка Bitrix не отдала поддерживаемый файл модели.");
+}
+
+function isProbablyModelResponse(probe, extension) {
+  if (!probe || ![200, 206].includes(Number(probe.status))) {
+    return false;
+  }
+
+  if (isProbablyErrorResponse(probe)) {
+    return false;
+  }
+
+  const ext = String(extension || "").toLowerCase();
+  const contentType = String(probe.contentType || "").toLowerCase();
+  const contentDisposition = String(probe.contentDisposition || "").toLowerCase();
+  const finalUrl = String(probe.finalUrl || probe.requestedUrl || "").toLowerCase();
+  const sampleText = String(probe.sampleText || "").trimStart();
+  const lowerSample = sampleText.toLowerCase();
+
+  if (ext && contentDisposition.includes(`.${ext}`)) {
+    return true;
+  }
+
+  if ((ext === "step" || ext === "stp") && lowerSample.startsWith("iso-10303-21")) {
+    return true;
+  }
+
+  if (ext === "stl" && lowerSample.startsWith("solid")) {
+    return true;
+  }
+
+  if (ext === "obj" && looksLikeObjFile(lowerSample)) {
+    return true;
+  }
+
+  if ((ext === "3mf" || ext === "lys" || ext === "lyt") && looksLikeZipFile(probe)) {
+    return true;
+  }
+
+  if (ext === "glb" && looksLikeGlbFile(probe)) {
+    return true;
+  }
+
+  if (
+    contentType.includes("application/octet-stream") ||
+    contentType.includes("application/zip") ||
+    contentType.includes("model/gltf-binary") ||
+    contentType.includes("model/") ||
+    contentType.includes("application/sla") ||
+    contentType.includes("application/vnd")
+  ) {
+    return true;
+  }
+
+  return Boolean(ext === "stl" && finalUrlHasModelPath(finalUrl, ext) && looksLikeBinaryFile(probe));
+}
+
+function looksLikeObjFile(sampleText) {
+  return (
+    sampleText.startsWith("v ") ||
+    sampleText.startsWith("o ") ||
+    sampleText.startsWith("g ") ||
+    sampleText.startsWith("#") ||
+    sampleText.includes("\nv ") ||
+    sampleText.includes("\nf ")
+  );
+}
+
+function looksLikeZipFile(probe) {
+  return String(probe?.sampleHex || "").toLowerCase().startsWith("50 4b");
+}
+
+function looksLikeGlbFile(probe) {
+  return String(probe?.sampleText || "").startsWith("glTF");
+}
+
+function isProbablyHtmlResponse(probe) {
+  const contentType = String(probe?.contentType || "").toLowerCase();
+  const sampleText = String(probe?.sampleText || "").trimStart().toLowerCase();
+
+  return (
+    contentType.includes("text/html") ||
+    sampleText.startsWith("<!doctype") ||
+    sampleText.startsWith("<html") ||
+    sampleText.includes("<head") ||
+    sampleText.includes("<body") ||
+    sampleText.includes("bitrix") ||
+    sampleText.includes("bx.")
+  );
+}
+
+function isProbablyErrorResponse(probe) {
+  const contentType = String(probe?.contentType || "").toLowerCase();
+  const sampleText = String(probe?.sampleText || "").trimStart().toLowerCase();
+
+  return (
+    isProbablyHtmlResponse(probe) ||
+    contentType.includes("application/json") ||
+    sampleText.startsWith("{") ||
+    sampleText.startsWith("[") ||
+    sampleText.includes('"status":"error"') ||
+    sampleText.includes('"errors"') ||
+    sampleText.includes("could not find configuration")
+  );
+}
+
+function finalUrlHasModelPath(finalUrl, extension) {
+  try {
+    const url = new URL(finalUrl);
+    return url.pathname.toLowerCase().endsWith(`.${extension}`);
+  } catch {
+    return finalUrl.split("?")[0].endsWith(`.${extension}`);
+  }
+}
+
+function looksLikeBinaryFile(probe) {
+  const text = String(probe?.sampleText || "");
+  if (!text) {
+    return false;
+  }
+
+  let suspiciousChars = 0;
+  for (const char of text) {
+    const code = char.charCodeAt(0);
+    if (code === 0 || (code < 9 && code !== 7)) {
+      suspiciousChars += 1;
+    }
+  }
+
+  return suspiciousChars > 0;
 }
 
 function buildFooter(files, block) {

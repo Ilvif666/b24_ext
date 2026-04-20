@@ -1,8 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Bitrix Task Files List",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shows task attachments in Bitrix as a clean list.",
+  "permissions": [
+    "downloads",
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": [
@@ -16,5 +23,8 @@
       ],
       "run_at": "document_idle"
     }
+  ],
+  "host_permissions": [
+    "<all_urls>"
   ]
 }

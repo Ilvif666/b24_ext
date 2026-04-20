@@ -35,12 +35,12 @@
 .b24-files-list-ext__item {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: start;
   gap: 8px;
   min-height: 34px;
   padding: 6px 8px;
   border: 1px solid rgba(82, 92, 105, 0.1);
-  border-radius: 10px;
+  border-radius: 8px;
   background: #ffffff;
 }
 
@@ -84,10 +84,18 @@
   text-decoration: underline;
 }
 
+.b24-files-list-ext__main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
 .b24-files-list-ext__actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  min-height: 24px;
 }
 
 .b24-files-list-ext__delete {
@@ -116,6 +124,72 @@
 .b24-files-list-ext__delete:disabled {
   cursor: default;
   opacity: 0.45;
+}
+
+.b24-files-list-ext__slicer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.b24-files-list-ext__slicer-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(82, 92, 105, 0.14);
+  border-radius: 8px;
+  background: #f6f8fa;
+  color: #333;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.b24-files-list-ext__slicer-button:hover,
+.b24-files-list-ext__slicer-button:focus-visible {
+  background: #eef2f4;
+}
+
+.b24-files-list-ext__slicer-button:disabled {
+  cursor: default;
+  opacity: 0.68;
+}
+
+.b24-files-list-ext__slicer-button--loading {
+  color: #535c69;
+}
+
+.b24-files-list-ext__slicer-button--error {
+  border-color: rgba(215, 59, 65, 0.35);
+  color: #d73b41;
+}
+
+.b24-files-list-ext__slicer-button--lychee {
+  color: #b72361;
+}
+
+.b24-files-list-ext__slicer-button--bambu {
+  color: #0f7f39;
+}
+
+.b24-files-list-ext__slicer-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.b24-files-list-ext__slicer-icon-svg {
+  display: block;
+}
+
+.b24-files-list-ext__slicer-label {
+  white-space: nowrap;
 }
 
 .b24-files-list-ext__footer {

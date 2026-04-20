@@ -1,0 +1,9 @@
+﻿{
+    "name":  "b24_slicer_launcher",
+    "description":  "Launches local slicers for Bitrix task model files",
+    "path":  "C:\\Users\\Андрей Сытник\\Projects\\b24_ext\\native-host\\publish\\B24SlicerLauncher.exe",
+    "type":  "stdio",
+    "allowed_origins":  [
+                            "chrome-extension://fophbmnlnnjeepigeaoeegafpmdcmdaa/"
+                        ]
+}
