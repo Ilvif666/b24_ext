@@ -1,4 +1,5 @@
 const EXTENSION_CLASS = "b24-files-list-ext";
+const FILES_LIST_SETTING = "filesListEnabled";
 const BLOCK_SELECTOR = '.tasks-field-files[data-task-field-id="fileIds"]';
 const LIST_SELECTOR = ".tasks-field-files-list";
 const REPLACEMENT_SELECTOR = '[data-b24-files-list="replacement"]';
@@ -21,13 +22,46 @@ const MODEL_FILE_EXTENSIONS = new Set([
 
 bootstrap();
 
-function bootstrap() {
+async function bootstrap() {
+  registerFilesListToggle();
+
+  if (!(await readFilesListSetting())) {
+    return;
+  }
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", start, { once: true });
     return;
   }
 
   start();
+}
+
+function readFilesListSetting() {
+  try {
+    return chrome.storage.sync
+      .get({ [FILES_LIST_SETTING]: false })
+      .then((values) => Boolean(values[FILES_LIST_SETTING]))
+      .catch(() => false);
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+function registerFilesListToggle() {
+  try {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "sync" || !changes[FILES_LIST_SETTING]) {
+        return;
+      }
+
+      if (isBitrixTaskPage()) {
+        location.reload();
+      }
+    });
+  } catch {
+    // Extension context unavailable on this page, nothing to toggle.
+  }
 }
 
 function start() {

@@ -1,14 +1,19 @@
 {
   "manifest_version": 3,
   "name": "Bitrix Task Files List",
-  "version": "0.2.1",
-  "description": "Shows task attachments in Bitrix as a clean list and highlights completed/deferred tasks.",
+  "version": "0.3.0",
+  "description": "Highlights completed and deferred tasks in Bitrix; an optional clean file list with Lychee and Bambu Studio buttons is off by default.",
   "permissions": [
     "downloads",
-    "nativeMessaging"
+    "nativeMessaging",
+    "storage"
   ],
   "background": {
     "service_worker": "background.js"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   },
   "content_scripts": [
     {

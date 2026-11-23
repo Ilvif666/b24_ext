@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <title>Настройки Bitrix Task Files List</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 16px;
+        color: #333;
+        font: 14px/1.45 system-ui, sans-serif;
+      }
+
+      label {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        cursor: pointer;
+      }
+
+      .hint {
+        margin: 10px 0 0 24px;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <label>
+      <input type="checkbox" id="files-list" />
+      <span>Список файлов задачи и кнопки Lychee / Bambu Studio</span>
+    </label>
+    <p class="hint">Выключено по умолчанию. Подсветка завершённых и отложенных задач работает всегда.</p>
+    <p class="hint">После переключения страницы портала перезагрузятся сами.</p>
+    <script src="options.js"></script>
+  </body>
+</html>
