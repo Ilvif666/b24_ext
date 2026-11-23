@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bitrix Task Files List",
-  "version": "0.1.1",
-  "description": "Shows task attachments in Bitrix as a clean list.",
+  "version": "0.2.0",
+  "description": "Shows task attachments in Bitrix as a clean list and highlights completed/deferred tasks.",
   "permissions": [
     "downloads",
     "nativeMessaging"

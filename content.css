@@ -221,3 +221,28 @@
   opacity: 0.6;
   cursor: default;
 }
+
+/* Bitrix task list: readable completed/deferred titles and status row colours. */
+body .task-status-text-color-completed,
+body .task-status-text-color-completed:hover,
+body .task-status-completed .task-title-link {
+  color: #333333 !important;
+  font-weight: 600 !important;
+}
+
+body .task-status-text-color-delayed,
+body .task-status-text-color-delayed:hover,
+body .task-status-delayed .task-title-link {
+  color: #333333 !important;
+  font-weight: 600 !important;
+}
+
+.main-grid-row:has(.task-status-text-color-completed) > .main-grid-cell,
+.main-grid-row:has(.task-status-completed) > .main-grid-cell {
+  background-color: #e6f7e6 !important;
+}
+
+.main-grid-row:has(.task-status-text-color-delayed) > .main-grid-cell,
+.main-grid-row:has(.task-status-delayed) > .main-grid-cell {
+  background-color: #e5f2fc !important;
+}
