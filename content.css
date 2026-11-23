@@ -228,6 +228,7 @@ body .task-status-text-color-completed:hover,
 body .task-status-completed .task-title-link {
   color: #333333 !important;
   font-weight: 600 !important;
+  text-decoration: none !important;
 }
 
 body .task-status-text-color-delayed,
