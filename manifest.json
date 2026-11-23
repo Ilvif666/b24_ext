@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bitrix Task Files List",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Highlights completed and deferred tasks in Bitrix; an optional clean file list with Lychee and Bambu Studio buttons is off by default.",
   "permissions": [
     "downloads",
@@ -26,7 +26,8 @@
       "css": [
         "content.css"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "host_permissions": [

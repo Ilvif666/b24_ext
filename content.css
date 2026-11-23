@@ -247,3 +247,50 @@ body .task-status-delayed .task-title-link {
 .main-grid-row:has(.task-status-delayed) > .main-grid-cell {
   background-color: #e5f2fc !important;
 }
+
+/* Bitrix task card: subtask widget rows (tasks-field-relation-tasks).
+   Bitrix renders these rows with display: contents, and a background on such a row
+   is never painted, so the row is turned into a real flex box first. */
+body .tasks-field-relation-tasks .tasks-task-line-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 2px 6px !important;
+  border-radius: 8px !important;
+}
+
+body .tasks-field-relation-tasks .tasks-task-line-row > .tasks-task-line-title-container-wrapper {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+}
+
+body .tasks-field-relation-tasks .tasks-task-line-row > .tasks-task-line-fields {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  flex: 0 0 auto !important;
+}
+
+body .tasks-field-relation-tasks .tasks-task-line-row > .tasks-task-line-more {
+  flex: 0 0 auto !important;
+}
+
+body .tasks-field-relation-tasks .tasks-task-line-row .tasks-task-line-title {
+  white-space: normal !important;
+  overflow: visible !important;
+  overflow-wrap: anywhere !important;
+}
+
+body .tasks-field-relation-tasks .tasks-task-line-title-href.--completed,
+body .tasks-field-relation-tasks .tasks-task-line-row.b24-task-row--delayed .tasks-task-line-title-href {
+  color: #333333 !important;
+  font-weight: 600 !important;
+}
+
+body .tasks-field-relation-tasks .tasks-task-line-row:has(.tasks-task-line-title-href.--completed) {
+  background-color: #e6f7e6 !important;
+}
+
+body .tasks-field-relation-tasks .tasks-task-line-row.b24-task-row--delayed {
+  background-color: #e5f2fc !important;
+}

@@ -1,5 +1,6 @@
 const EXTENSION_CLASS = "b24-files-list-ext";
 const FILES_LIST_SETTING = "filesListEnabled";
+const DELAYED_TASK_ROW_CLASS = "b24-task-row--delayed";
 const BLOCK_SELECTOR = '.tasks-field-files[data-task-field-id="fileIds"]';
 const LIST_SELECTOR = ".tasks-field-files-list";
 const REPLACEMENT_SELECTOR = '[data-b24-files-list="replacement"]';
@@ -24,6 +25,7 @@ bootstrap();
 
 async function bootstrap() {
   registerFilesListToggle();
+  startDelayedTaskRowHighlighting();
 
   if (!(await readFilesListSetting())) {
     return;
@@ -62,6 +64,39 @@ function registerFilesListToggle() {
   } catch {
     // Extension context unavailable on this page, nothing to toggle.
   }
+}
+
+let delayedRowTimer = null;
+
+function startDelayedTaskRowHighlighting() {
+  if (!document.body || !(/bitrix/i.test(location.hostname) || isBitrixTaskPage())) {
+    return;
+  }
+
+  markDelayedTaskRows();
+
+  new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (
+          node instanceof Element &&
+          (node.matches?.(".tasks-field-relation-tasks, .tasks-task-line-row") ||
+            node.querySelector?.(".tasks-field-relation-tasks, .tasks-task-line-row"))
+        ) {
+          clearTimeout(delayedRowTimer);
+          delayedRowTimer = window.setTimeout(markDelayedTaskRows, 200);
+          return;
+        }
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+}
+
+function markDelayedTaskRows() {
+  document.querySelectorAll(".tasks-field-relation-tasks .tasks-task-line-row").forEach((row) => {
+    const status = row.querySelector(".ui-chip-text")?.textContent.trim();
+    row.classList.toggle(DELAYED_TASK_ROW_CLASS, status === "Отложена");
+  });
 }
 
 function start() {
